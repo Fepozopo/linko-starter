@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -47,6 +48,8 @@ func (s *server) start() error {
 	if err != nil {
 		return err
 	}
+	msg := fmt.Sprintf("Linko is running on http://localhost:%d", ln.Addr().(*net.TCPAddr).Port)
+	slog.Info(msg)
 	if err := s.httpServer.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -54,6 +57,7 @@ func (s *server) start() error {
 }
 
 func (s *server) shutdown(ctx context.Context) error {
+	slog.Info("Linko is shutting down")
 	return s.httpServer.Shutdown(ctx)
 }
 
