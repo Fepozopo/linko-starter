@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -17,18 +18,21 @@ type server struct {
 	cancel     context.CancelFunc
 }
 
+func requestLogger(logger *log.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r)
+			logger.Printf("Served request: %s %s", r.Method, r.URL.Path)
+		})
+	}
+}
+
 func newServer(store store.Store, port int, cancel context.CancelFunc) *server {
 	mux := http.NewServeMux()
 
-	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
-	}
-
 	s := &server{
-		httpServer: srv,
-		store:      store,
-		cancel:     cancel,
+		store:  store,
+		cancel: cancel,
 	}
 
 	mux.HandleFunc("GET /", s.handlerIndex)
@@ -38,6 +42,12 @@ func newServer(store store.Store, port int, cancel context.CancelFunc) *server {
 	mux.Handle("GET /api/urls", s.authMiddleware(http.HandlerFunc(s.handlerListURLs)))
 	mux.HandleFunc("GET /{shortCode}", s.handlerRedirect)
 	mux.HandleFunc("POST /admin/shutdown", s.handlerShutdown)
+
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: requestLogger(logger)(mux),
+	}
+	s.httpServer = srv
 
 	return s
 }
