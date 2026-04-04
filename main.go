@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -26,28 +28,40 @@ func main() {
 	os.Exit(status)
 }
 
-func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
-	// Standard logger writes to STDERR with DEBUG prefix and is used for internal messages
-	stdLogger := log.New(os.Stderr, "DEBUG: ", log.LstdFlags)
-
-	// Create/access the access log file; fall back to STDERR if we can't open the file
-	accessFile, err := os.OpenFile("linko.access.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		stdLogger.Printf("failed to open access log, using STDERR: %v", err)
-		accessFile = os.Stderr
-	} else {
-		// only close if we successfully opened a real file
-		defer accessFile.Close()
+func initializeLogger() (*log.Logger, *os.File) {
+	// If LINKO_LOG_FILE is set, write to both the file and STDERR.
+	// Otherwise, only write to STDERR.
+	path := os.Getenv("LINKO_LOG_FILE")
+	if path == "" {
+		return log.New(os.Stderr, "", log.LstdFlags), nil
 	}
-	// Access logger writes to the access log with INFO prefix and is used for request/server logs
-	accessLogger := log.New(accessFile, "INFO: ", log.LstdFlags)
 
-	st, err := store.New(dataDir, stdLogger)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		stdLogger.Printf("failed to create store: %v", err)
+		// If we can't open the file, fall back to STDERR and emit a message there.
+		fmt.Fprintf(os.Stderr, "failed to open log file %s, using STDERR: %v\n", path, err)
+		return log.New(os.Stderr, "", log.LstdFlags), nil
+	}
+
+	mw := io.MultiWriter(f, os.Stderr)
+	return log.New(mw, "", log.LstdFlags), f
+}
+
+func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
+	// Initialize a single logger used throughout the app.
+	logger, lf := initializeLogger()
+	if lf != nil {
+		// only close if we successfully opened a real file
+		defer lf.Close()
+	}
+
+	st, err := store.New(dataDir, logger)
+	if err != nil {
+		logger.Printf("failed to create store: %v", err)
 		return 1
 	}
-	s := newServer(st, httpPort, cancel, accessLogger, stdLogger)
+	// Use the same logger for both access and internal logging.
+	s := newServer(st, httpPort, cancel, logger)
 	var serverErr error
 	go func() {
 		serverErr = s.start()
@@ -58,11 +72,11 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 	defer cancel()
 
 	if err := s.shutdown(shutdownCtx); err != nil {
-		stdLogger.Printf("failed to shutdown server: %v", err)
+		logger.Printf("failed to shutdown server: %v", err)
 		return 1
 	}
 	if serverErr != nil {
-		stdLogger.Printf("server error: %v", serverErr)
+		logger.Printf("server error: %v", serverErr)
 		return 1
 	}
 	return 0

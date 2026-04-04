@@ -38,7 +38,8 @@ func New(dir string, logger *log.Logger) (*Store, error) {
 	}
 	if logger == nil {
 		// fallback to a simple logger to avoid nil checks elsewhere
-		logger = log.New(os.Stderr, "", 0)
+		// Use standard flags so output matches the application's logger format.
+		logger = log.New(os.Stderr, "", log.LstdFlags)
 	}
 	return &Store{
 		dir:    dir,
