@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -28,7 +29,30 @@ func main() {
 	os.Exit(status)
 }
 
-func initializeLogger() (*log.Logger, *os.File) {
+// bufferedFile wraps an os.File and a bufio.Writer so we can flush on Close.
+type bufferedFile struct {
+	f *os.File
+	w *bufio.Writer
+}
+
+func (bf *bufferedFile) Close() error {
+	var flushErr error
+	if bf.w != nil {
+		flushErr = bf.w.Flush()
+	}
+	closeErr := bf.f.Close()
+
+	// Prefer returning the flush error if present, but include both if both exist.
+	if flushErr != nil {
+		if closeErr != nil {
+			return fmt.Errorf("flush error: %v; close error: %v", flushErr, closeErr)
+		}
+		return flushErr
+	}
+	return closeErr
+}
+
+func initializeLogger() (*log.Logger, io.Closer) {
 	// If LINKO_LOG_FILE is set, write to both the file and STDERR.
 	// Otherwise, only write to STDERR.
 	path := os.Getenv("LINKO_LOG_FILE")
@@ -43,8 +67,12 @@ func initializeLogger() (*log.Logger, *os.File) {
 		return log.New(os.Stderr, "", log.LstdFlags), nil
 	}
 
-	mw := io.MultiWriter(f, os.Stderr)
-	return log.New(mw, "", log.LstdFlags), f
+	// Wrap file writer with an 8KB buffered writer.
+	bufWriter := bufio.NewWriterSize(f, 8192)
+	mw := io.MultiWriter(bufWriter, os.Stderr)
+	logger := log.New(mw, "", log.LstdFlags)
+
+	return logger, &bufferedFile{f: f, w: bufWriter}
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
