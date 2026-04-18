@@ -6,7 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -52,25 +52,26 @@ func (bf *bufferedFile) Close() error {
 	return closeErr
 }
 
-func initializeLogger() (*log.Logger, io.Closer) {
+func initializeLogger() (*slog.Logger, io.Closer) {
 	// If LINKO_LOG_FILE is set, write to both the file and STDERR.
 	// Otherwise, only write to STDERR.
 	path := os.Getenv("LINKO_LOG_FILE")
 	if path == "" {
-		return log.New(os.Stderr, "", log.LstdFlags), nil
+		return slog.New(slog.NewTextHandler(os.Stderr, nil)), nil
 	}
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		// If we can't open the file, fall back to STDERR and emit a message there.
 		fmt.Fprintf(os.Stderr, "failed to open log file %s, using STDERR: %v\n", path, err)
-		return log.New(os.Stderr, "", log.LstdFlags), nil
+		return slog.New(slog.NewTextHandler(os.Stderr, nil)), nil
 	}
 
 	// Wrap file writer with an 8KB buffered writer.
 	bufWriter := bufio.NewWriterSize(f, 8192)
 	mw := io.MultiWriter(bufWriter, os.Stderr)
-	logger := log.New(mw, "", log.LstdFlags)
+	handler := slog.NewTextHandler(mw, nil)
+	logger := slog.New(handler)
 
 	return logger, &bufferedFile{f: f, w: bufWriter}
 }
@@ -85,7 +86,7 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 
 	st, err := store.New(dataDir, logger)
 	if err != nil {
-		logger.Printf("failed to create store: %v", err)
+		logger.Info("failed to create store", "error", err)
 		return 1
 	}
 	// Use the same logger for both access and internal logging.
@@ -100,11 +101,11 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 	defer cancel()
 
 	if err := s.shutdown(shutdownCtx); err != nil {
-		logger.Printf("failed to shutdown server: %v", err)
+		logger.Info("failed to shutdown server", "error", err)
 		return 1
 	}
 	if serverErr != nil {
-		logger.Printf("server error: %v", serverErr)
+		logger.Info("server error", "error", serverErr)
 		return 1
 	}
 	return 0
