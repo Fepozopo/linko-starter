@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -98,7 +97,10 @@ func (s *Store) walk(ctx context.Context, ch chan<- ShortURL) {
 		if !e.IsDir() {
 			long, err := s.Lookup(ctx, e.Name())
 			if err != nil {
-				ch <- ShortURL{Err: fmt.Errorf("read %s: %w", filepath.Join(s.dir, e.Name()), err)}
+				if s.logger != nil {
+					s.logger.Error("failed to read file", "path", filepath.Join(s.dir, e.Name()), "error", err)
+				}
+				ch <- ShortURL{Err: err}
 				continue
 			}
 			ch <- ShortURL{ShortCode: e.Name(), LongURL: long}

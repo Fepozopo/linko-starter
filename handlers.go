@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -53,7 +52,8 @@ func (s *server) handlerShortenLink(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info("Parsed URL", "scheme", u.Scheme, "host", u.Host)
 	if err := checkDestination(longURL); err != nil {
-		http.Error(w, fmt.Sprintf("invalid target URL: %v", err), http.StatusBadRequest)
+		s.logger.Error("invalid target URL", "error", err)
+		http.Error(w, "invalid target URL", http.StatusBadRequest)
 		return
 	}
 	shortCode, err := s.store.Create(r.Context(), longURL)
