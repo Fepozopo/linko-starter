@@ -74,8 +74,8 @@ func initializeLogger() (*slog.Logger, io.Closer) {
 	// Wrap file writer with an 8KB buffered writer.
 	bufWriter := bufio.NewWriterSize(f, 8192)
 
-	// File handler should include INFO and above.
-	fileHandler := slog.NewTextHandler(bufWriter, &slog.HandlerOptions{Level: slog.LevelInfo})
+	// File handler should include INFO and above. Use JSON for file logs.
+	fileHandler := slog.NewJSONHandler(bufWriter, &slog.HandlerOptions{Level: slog.LevelInfo})
 	// STDERR handler should include DEBUG and above.
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 
