@@ -25,8 +25,8 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			// Log structured access information.
 			clientIP := r.RemoteAddr
-			if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-				clientIP = host
+			if host, port, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+				clientIP = fmt.Sprintf("%s:%s", host, port)
 			}
 			logger.Info("Served request", "method", r.Method, "path", r.URL.Path, "client_ip", clientIP)
 		})
