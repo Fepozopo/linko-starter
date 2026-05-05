@@ -52,13 +52,24 @@ func (bf *bufferedFile) Close() error {
 	return closeErr
 }
 
+func replaceAttr(groups []string, a slog.Attr) slog.Attr {
+	if a.Key == "error" {
+		err, ok := a.Value.Any().(error)
+		if !ok {
+			return a
+		}
+		return slog.String("error", fmt.Sprintf("%+v", err))
+	}
+	return a
+}
+
 func initializeLogger() (*slog.Logger, io.Closer) {
 	// If LINKO_LOG_FILE is set, write to both the file and STDERR.
 	// Otherwise, only write to STDERR.
 	path := os.Getenv("LINKO_LOG_FILE")
 	if path == "" {
 		// STDERR should include DEBUG and above.
-		stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+		stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})
 		return slog.New(stderrHandler), nil
 	}
 
@@ -67,7 +78,7 @@ func initializeLogger() (*slog.Logger, io.Closer) {
 		// If we can't open the file, fall back to STDERR and emit a message there.
 		fmt.Fprintf(os.Stderr, "failed to open log file %s, using STDERR: %v\n", path, err)
 		// Ensure STDERR includes DEBUG and above even when file logging fails.
-		stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+		stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})
 		return slog.New(stderrHandler), nil
 	}
 
@@ -75,9 +86,9 @@ func initializeLogger() (*slog.Logger, io.Closer) {
 	bufWriter := bufio.NewWriterSize(f, 8192)
 
 	// File handler should include INFO and above. Use JSON for file logs.
-	fileHandler := slog.NewJSONHandler(bufWriter, &slog.HandlerOptions{Level: slog.LevelInfo})
+	fileHandler := slog.NewJSONHandler(bufWriter, &slog.HandlerOptions{Level: slog.LevelInfo, ReplaceAttr: replaceAttr})
 	// STDERR handler should include DEBUG and above.
-	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})
 
 	// Combine handlers so records are directed to the appropriate outputs
 	// depending on their level.
