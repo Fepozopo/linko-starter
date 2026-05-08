@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	pkgerr "github.com/pkg/errors"
 
 	"boot.dev/linko/internal/store"
 )
@@ -52,13 +55,36 @@ func (bf *bufferedFile) Close() error {
 	return closeErr
 }
 
+// stackTracer extracts stack traces from errors wrapped with pkg/errors.
+type stackTracer interface {
+	error
+	StackTrace() pkgerr.StackTrace
+}
+
 func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 	if a.Key == "error" {
 		err, ok := a.Value.Any().(error)
 		if !ok {
 			return a
 		}
-		return slog.String("error", fmt.Sprintf("%+v", err))
+
+		// If the error implements stackTracer, extract the
+		// message and the stack trace separately.
+		if stackErr, ok := errors.AsType[stackTracer](err); ok {
+			return slog.GroupAttrs("error", slog.Attr{
+				Key:   "message",
+				Value: slog.StringValue(stackErr.Error()),
+			}, slog.Attr{
+				Key:   "stack_trace",
+				Value: slog.StringValue(fmt.Sprintf("%+v", stackErr.StackTrace())),
+			})
+		}
+
+		// Fallback: just include the error message.
+		return slog.GroupAttrs("error", slog.Attr{
+			Key:   "message",
+			Value: slog.StringValue(err.Error()),
+		})
 	}
 	return a
 }
