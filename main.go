@@ -15,6 +15,7 @@ import (
 
 	pkgerr "github.com/pkg/errors"
 
+	"boot.dev/linko/internal/linkoerr"
 	"boot.dev/linko/internal/store"
 )
 
@@ -62,31 +63,42 @@ type stackTracer interface {
 }
 
 func replaceAttr(groups []string, a slog.Attr) slog.Attr {
-	if a.Key == "error" {
-		err, ok := a.Value.Any().(error)
-		if !ok {
-			return a
-		}
+	if a.Key != "error" {
+		return a
+	}
+	err, ok := a.Value.Any().(error)
+	if !ok {
+		return a
+	}
 
-		// If the error implements stackTracer, extract the
-		// message and the stack trace separately.
-		if stackErr, ok := errors.AsType[stackTracer](err); ok {
-			return slog.GroupAttrs("error", slog.Attr{
+	// Extract structured attributes carried on the error chain.
+	attrs := linkoerr.Attrs(err)
+
+	// If the error implements stackTracer, extract the message and the stack trace separately.
+	if stackErr, ok := errors.AsType[stackTracer](err); ok {
+		base := []slog.Attr{
+			{
 				Key:   "message",
 				Value: slog.StringValue(stackErr.Error()),
-			}, slog.Attr{
+			},
+			{
 				Key:   "stack_trace",
 				Value: slog.StringValue(fmt.Sprintf("%+v", stackErr.StackTrace())),
-			})
+			},
 		}
+		base = append(base, attrs...)
+		return slog.GroupAttrs("error", base...)
+	}
 
-		// Fallback: just include the error message.
-		return slog.GroupAttrs("error", slog.Attr{
+	// Fallback: include the error message plus any structured attributes.
+	base := []slog.Attr{
+		{
 			Key:   "message",
 			Value: slog.StringValue(err.Error()),
-		})
+		},
 	}
-	return a
+	base = append(base, attrs...)
+	return slog.GroupAttrs("error", base...)
 }
 
 func initializeLogger() (*slog.Logger, io.Closer) {

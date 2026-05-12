@@ -4,11 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"boot.dev/linko/internal/linkoerr"
 )
 
 type ShortURL struct {
@@ -98,10 +99,11 @@ func (s *Store) walk(ctx context.Context, ch chan<- ShortURL) {
 		if !e.IsDir() {
 			long, err := s.Lookup(ctx, e.Name())
 			if err != nil {
+				wrapped := linkoerr.WithAttrs(err, "path", filepath.Join(s.dir, e.Name()))
 				if s.logger != nil {
-					s.logger.Error("failed to read file", "path", filepath.Join(s.dir, e.Name()), "error", err.Error())
+					s.logger.Error("failed to read file", "error", wrapped)
 				}
-				ch <- ShortURL{Err: err}
+				ch <- ShortURL{Err: wrapped}
 				continue
 			}
 			ch <- ShortURL{ShortCode: e.Name(), LongURL: long}
@@ -117,7 +119,7 @@ func (s *Store) Lookup(_ context.Context, short string) (string, error) {
 		return "", ErrNotFound
 	}
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", shortcodeFilepath, err)
+		return "", err
 	}
 	return string(data), nil
 }
