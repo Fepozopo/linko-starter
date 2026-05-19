@@ -62,6 +62,37 @@ type stackTracer interface {
 	StackTrace() pkgerr.StackTrace
 }
 
+// multiError represents an error that wraps multiple underlying errors via Unwrap() []error
+type multiError interface {
+	error
+	Unwrap() []error
+}
+
+// errorAttrs builds a slice of slog attributes for a single error. It includes:
+// - a "message" attribute containing the error message
+// - any structured attributes extracted via linkoerr.Attrs
+// - a "stack_trace" attribute if the error implements stackTracer
+func errorAttrs(err error) []slog.Attr {
+	attrs := []slog.Attr{
+		{
+			Key:   "message",
+			Value: slog.StringValue(err.Error()),
+		},
+	}
+
+	// Include any structured attributes attached via linkoerr.
+	attrs = append(attrs, linkoerr.Attrs(err)...)
+
+	// If this error has a stack trace, include it after the other attrs.
+	if st, ok := errors.AsType[stackTracer](err); ok {
+		attrs = append(attrs, slog.Attr{
+			Key:   "stack_trace",
+			Value: slog.StringValue(fmt.Sprintf("%+v", st.StackTrace())),
+		})
+	}
+	return attrs
+}
+
 func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 	if a.Key != "error" {
 		return a
@@ -71,34 +102,20 @@ func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 		return a
 	}
 
-	// Extract structured attributes carried on the error chain.
-	attrs := linkoerr.Attrs(err)
-
-	// If the error implements stackTracer, extract the message and the stack trace separately.
-	if stackErr, ok := errors.AsType[stackTracer](err); ok {
-		base := []slog.Attr{
-			{
-				Key:   "message",
-				Value: slog.StringValue(stackErr.Error()),
-			},
-			{
-				Key:   "stack_trace",
-				Value: slog.StringValue(fmt.Sprintf("%+v", stackErr.StackTrace())),
-			},
+	// If this is a multi-error (errors.Join or similar), unwrap and present each
+	// underlying error as a separate numbered entry inside a top-level "errors" group.
+	if me, ok := errors.AsType[multiError](err); ok {
+		underlying := me.Unwrap()
+		var grouped []slog.Attr
+		for i, ue := range underlying {
+			key := fmt.Sprintf("error_%d", i+1)
+			grouped = append(grouped, slog.GroupAttrs(key, errorAttrs(ue)...))
 		}
-		base = append(base, attrs...)
-		return slog.GroupAttrs("error", base...)
+		return slog.GroupAttrs("errors", grouped...)
 	}
 
-	// Fallback: include the error message plus any structured attributes.
-	base := []slog.Attr{
-		{
-			Key:   "message",
-			Value: slog.StringValue(err.Error()),
-		},
-	}
-	base = append(base, attrs...)
-	return slog.GroupAttrs("error", base...)
+	// Single error: render as a single "error" group.
+	return slog.GroupAttrs("error", errorAttrs(err)...)
 }
 
 func initializeLogger() (*slog.Logger, io.Closer) {
