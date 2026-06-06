@@ -155,6 +155,10 @@ func initializeLogger() (*slog.Logger, io.Closer) {
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
+	// Capture build info and environment for structured logging.
+	env := os.Getenv("ENV")
+	hostname, _ := os.Hostname()
+
 	// Initialize a single logger used throughout the app.
 	logger, lf := initializeLogger()
 	if lf != nil {
@@ -165,6 +169,8 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 	logger = logger.With(
 		slog.String("git_sha", build.GitSHA),
 		slog.String("build_time", build.BuildTime),
+		slog.String("env", env),
+		slog.String("hostname", hostname),
 	)
 
 	st, err := store.New(dataDir, logger)
