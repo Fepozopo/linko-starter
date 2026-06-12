@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"boot.dev/linko/internal/store"
 )
@@ -19,16 +21,70 @@ type server struct {
 	logger     *slog.Logger
 }
 
+type spyReadCloser struct {
+	io.ReadCloser
+	bytesRead int64
+}
+
+func (s *spyReadCloser) Read(p []byte) (int, error) {
+	n, err := s.ReadCloser.Read(p)
+	s.bytesRead += int64(n)
+	return n, err
+}
+
+type spyResponseWriter struct {
+	http.ResponseWriter
+	statusCode   int
+	bytesWritten int64
+}
+
+func (s *spyResponseWriter) WriteHeader(statusCode int) {
+	if s.statusCode == 0 {
+		s.statusCode = statusCode
+	}
+	s.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (s *spyResponseWriter) Write(p []byte) (int, error) {
+	if s.statusCode == 0 {
+		s.statusCode = http.StatusOK
+	}
+	n, err := s.ResponseWriter.Write(p)
+	s.bytesWritten += int64(n)
+	return n, err
+}
+
 func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			next.ServeHTTP(w, r)
+			start := time.Now()
+			if r.Body == nil {
+				r.Body = http.NoBody
+			}
+			requestBody := &spyReadCloser{ReadCloser: r.Body}
+			r.Body = requestBody
+
+			responseWriter := &spyResponseWriter{ResponseWriter: w}
+			next.ServeHTTP(responseWriter, r)
+
 			// Log structured access information.
 			clientIP := r.RemoteAddr
 			if host, port, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 				clientIP = fmt.Sprintf("%s:%s", host, port)
 			}
-			logger.Info("Served request", "method", r.Method, "path", r.URL.Path, "client_ip", clientIP)
+			if responseWriter.statusCode == 0 {
+				responseWriter.statusCode = http.StatusOK
+			}
+			logger.Info(
+				"Served request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"client_ip", clientIP,
+				"duration", time.Since(start),
+				"request_body_bytes", requestBody.bytesRead,
+				"response_status", responseWriter.statusCode,
+				"response_body_bytes", responseWriter.bytesWritten,
+			)
 		})
 	}
 }
