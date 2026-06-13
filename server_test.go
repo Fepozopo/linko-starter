@@ -57,3 +57,40 @@ func Test_requestLogger(t *testing.T) {
 		t.Errorf("unexpected status code: got %d, want %d", rr.Code, expectedStatusCode)
 	}
 }
+
+func Test_requestLoggerAddsUser(t *testing.T) {
+	logBuffer := &bytes.Buffer{}
+
+	logger := slog.New(slog.NewTextHandler(logBuffer, &slog.HandlerOptions{
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			switch a.Key {
+			case slog.TimeKey:
+				return slog.Time(slog.TimeKey, time.Date(2023, 10, 1, 12, 34, 57, 0, time.UTC))
+			case "duration":
+				return slog.Duration("duration", 42*time.Millisecond)
+			default:
+				return a
+			}
+		},
+	}))
+
+	s := &server{logger: logger}
+	loggedHandler := requestLogger(logger)(s.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	req := httptest.NewRequest("POST", "http://lin.ko/api/login", nil)
+	req.SetBasicAuth("frodo", "ofTheNineFingers")
+	rr := httptest.NewRecorder()
+	loggedHandler.ServeHTTP(rr, req)
+
+	const expectedLogString = `time=2023-10-01T12:34:57.000Z level=INFO msg="Served request" method=POST path=/api/login client_ip=192.0.2.1:1234 duration=42ms request_body_bytes=0 response_status=200 response_body_bytes=0 user=frodo` + "\n"
+	const expectedStatusCode = http.StatusOK
+
+	if got := logBuffer.String(); got != expectedLogString {
+		t.Errorf("unexpected log output:\n got: %q\n want: %q", got, expectedLogString)
+	}
+	if rr.Code != expectedStatusCode {
+		t.Errorf("unexpected status code: got %d, want %d", rr.Code, expectedStatusCode)
+	}
+}

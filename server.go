@@ -58,6 +58,8 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
+			logCtx := &LogContext{}
+			r = r.WithContext(context.WithValue(r.Context(), LogContextKey, logCtx))
 			if r.Body == nil {
 				r.Body = http.NoBody
 			}
@@ -75,8 +77,7 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			if responseWriter.statusCode == 0 {
 				responseWriter.statusCode = http.StatusOK
 			}
-			logger.Info(
-				"Served request",
+			attrs := []any{
 				"method", r.Method,
 				"path", r.URL.Path,
 				"client_ip", clientIP,
@@ -84,6 +85,13 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				"request_body_bytes", requestBody.bytesRead,
 				"response_status", responseWriter.statusCode,
 				"response_body_bytes", responseWriter.bytesWritten,
+			}
+			if logCtx.Username != "" {
+				attrs = append(attrs, "user", logCtx.Username)
+			}
+			logger.Info(
+				"Served request",
+				attrs...,
 			)
 		})
 	}

@@ -11,6 +11,11 @@ import (
 type contextKey string
 
 const UserContextKey contextKey = "user"
+const LogContextKey contextKey = "log_context"
+
+type LogContext struct {
+	Username string
+}
 
 var allowedUsers = map[string]string{
 	"frodo":   "$2a$10$B6O/n6teuCzpuh66jrUAdeaJ3WvXcxRkzpN0x7H.di9G9e/NGb9Me",
@@ -43,6 +48,9 @@ func (s *server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, username))
+		if logCtx, ok := r.Context().Value(LogContextKey).(*LogContext); ok {
+			logCtx.Username = username
+		}
 		next.ServeHTTP(w, r)
 	})
 }
