@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -92,5 +93,52 @@ func Test_requestLoggerAddsUser(t *testing.T) {
 	}
 	if rr.Code != expectedStatusCode {
 		t.Errorf("unexpected status code: got %d, want %d", rr.Code, expectedStatusCode)
+	}
+}
+
+func Test_requestLoggerLogsError(t *testing.T) {
+	logBuffer := &bytes.Buffer{}
+
+	logger := slog.New(slog.NewJSONHandler(logBuffer, &slog.HandlerOptions{
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			switch a.Key {
+			case slog.TimeKey:
+				return slog.Time(slog.TimeKey, time.Date(2023, 10, 1, 12, 34, 57, 0, time.UTC))
+			case "duration":
+				return slog.Duration("duration", 42*time.Millisecond)
+			case "error":
+				return replaceAttr(groups, a)
+			default:
+				return a
+			}
+		},
+	}))
+
+	loggedHandler := requestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpError(r.Context(), w, http.StatusInternalServerError, io.EOF)
+	}))
+
+	req := httptest.NewRequest("GET", "http://lin.ko/api/stats", nil)
+	req.RemoteAddr = "192.0.2.1:1234"
+	rr := httptest.NewRecorder()
+	loggedHandler.ServeHTTP(rr, req)
+
+	var got map[string]any
+	if err := json.Unmarshal(logBuffer.Bytes(), &got); err != nil {
+		t.Fatalf("unexpected log output: %v", err)
+	}
+	errorValue, ok := got["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured error object, got %#v", got["error"])
+	}
+	if errorValue["message"] != "EOF" {
+		t.Fatalf("unexpected error message: %#v", errorValue["message"])
+	}
+	stackTrace, ok := errorValue["stack_trace"].(string)
+	if !ok || stackTrace == "" {
+		t.Fatalf("expected stack_trace for io.EOF: %#v", errorValue)
+	}
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("unexpected status code: got %d, want %d", rr.Code, http.StatusInternalServerError)
 	}
 }

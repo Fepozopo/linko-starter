@@ -89,6 +89,9 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			if logCtx.Username != "" {
 				attrs = append(attrs, "user", logCtx.Username)
 			}
+			if logCtx.Error != nil {
+				attrs = append(attrs, "error", logCtx.Error)
+			}
 			logger.Info(
 				"Served request",
 				attrs...,
@@ -142,7 +145,7 @@ func (s *server) shutdown(ctx context.Context) error {
 
 func (s *server) handlerShutdown(w http.ResponseWriter, r *http.Request) {
 	if os.Getenv("ENV") == "production" {
-		http.NotFound(w, r)
+		httpError(r.Context(), w, http.StatusNotFound, errors.New("not found"))
 		return
 	}
 	w.WriteHeader(http.StatusOK)
