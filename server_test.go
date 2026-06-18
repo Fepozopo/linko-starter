@@ -11,6 +11,49 @@ import (
 	"time"
 )
 
+func Test_requestIDMiddlewareUsesInboundRequestID(t *testing.T) {
+	const expectedRequestID = "incoming-request-id"
+
+	var seenRequestID string
+	handler := requestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenRequestID = w.Header().Get(requestIDHeader)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest("GET", "http://lin.ko/api/stats", nil)
+	req.Header.Set(requestIDHeader, expectedRequestID)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if seenRequestID != expectedRequestID {
+		t.Fatalf("unexpected request ID seen by handler: got %q, want %q", seenRequestID, expectedRequestID)
+	}
+	if got := rr.Header().Get(requestIDHeader); got != expectedRequestID {
+		t.Fatalf("unexpected response request ID: got %q, want %q", got, expectedRequestID)
+	}
+}
+
+func Test_requestIDMiddlewareGeneratesRequestID(t *testing.T) {
+	var seenRequestID string
+	handler := requestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenRequestID = w.Header().Get(requestIDHeader)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest("GET", "http://lin.ko/api/stats", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if seenRequestID == "" {
+		t.Fatal("expected request ID to be set before handler execution")
+	}
+	if got := rr.Header().Get(requestIDHeader); got == "" {
+		t.Fatal("expected request ID response header to be set")
+	} else if got != seenRequestID {
+		t.Fatalf("unexpected response request ID: got %q, want %q", got, seenRequestID)
+	}
+}
+
 func Test_requestLogger(t *testing.T) {
 	logBuffer := &bytes.Buffer{}
 
@@ -41,14 +84,15 @@ func Test_requestLogger(t *testing.T) {
 			t.Fatalf("unexpected response write error: %v", err)
 		}
 	})
-	loggedHandler := requestLoggerMiddleware(dummyHandler)
+	loggedHandler := requestIDMiddleware(requestLoggerMiddleware(dummyHandler))
 
 	req := httptest.NewRequest("POST", "http://lin.ko/api/stats", bytes.NewBufferString("payload"))
+	req.Header.Set(requestIDHeader, "request-123")
 	req.RemoteAddr = "192.0.2.1:1234"
 	rr := httptest.NewRecorder()
 	loggedHandler.ServeHTTP(rr, req)
 
-	const expectedLogString = `time=2023-10-01T12:34:57.000Z level=INFO msg="Served request" method=POST path=/api/stats client_ip=192.0.2.1:1234 duration=42ms request_body_bytes=7 response_status=201 response_body_bytes=2` + "\n"
+	const expectedLogString = `time=2023-10-01T12:34:57.000Z level=INFO msg="Served request" method=POST path=/api/stats request_id=request-123 client_ip=192.0.2.1:1234 duration=42ms request_body_bytes=7 response_status=201 response_body_bytes=2` + "\n"
 	const expectedStatusCode = http.StatusCreated
 
 	if got := logBuffer.String(); got != expectedLogString {
@@ -76,16 +120,17 @@ func Test_requestLoggerAddsUser(t *testing.T) {
 	}))
 
 	s := &server{logger: logger}
-	loggedHandler := requestLogger(logger)(s.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	loggedHandler := requestIDMiddleware(requestLogger(logger)(s.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	})))
+	}))))
 
 	req := httptest.NewRequest("POST", "http://lin.ko/api/login", nil)
+	req.Header.Set(requestIDHeader, "request-456")
 	req.SetBasicAuth("frodo", "ofTheNineFingers")
 	rr := httptest.NewRecorder()
 	loggedHandler.ServeHTTP(rr, req)
 
-	const expectedLogString = `time=2023-10-01T12:34:57.000Z level=INFO msg="Served request" method=POST path=/api/login client_ip=192.0.2.1:1234 duration=42ms request_body_bytes=0 response_status=200 response_body_bytes=0 user=frodo` + "\n"
+	const expectedLogString = `time=2023-10-01T12:34:57.000Z level=INFO msg="Served request" method=POST path=/api/login request_id=request-456 client_ip=192.0.2.1:1234 duration=42ms request_body_bytes=0 response_status=200 response_body_bytes=0 user=frodo` + "\n"
 	const expectedStatusCode = http.StatusOK
 
 	if got := logBuffer.String(); got != expectedLogString {
@@ -114,11 +159,12 @@ func Test_requestLoggerLogsError(t *testing.T) {
 		},
 	}))
 
-	loggedHandler := requestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	loggedHandler := requestIDMiddleware(requestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		httpError(r.Context(), w, http.StatusInternalServerError, io.EOF)
-	}))
+	})))
 
 	req := httptest.NewRequest("GET", "http://lin.ko/api/stats", nil)
+	req.Header.Set(requestIDHeader, "request-789")
 	req.RemoteAddr = "192.0.2.1:1234"
 	rr := httptest.NewRecorder()
 	loggedHandler.ServeHTTP(rr, req)
@@ -126,6 +172,9 @@ func Test_requestLoggerLogsError(t *testing.T) {
 	var got map[string]any
 	if err := json.Unmarshal(logBuffer.Bytes(), &got); err != nil {
 		t.Fatalf("unexpected log output: %v", err)
+	}
+	if got["request_id"] != "request-789" {
+		t.Fatalf("unexpected request_id: %#v", got["request_id"])
 	}
 	errorValue, ok := got["error"].(map[string]any)
 	if !ok {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 
 	"boot.dev/linko/internal/store"
 )
+
+const requestIDHeader = "X-Request-ID"
 
 type server struct {
 	httpServer *http.Server
@@ -54,6 +57,17 @@ func (s *spyResponseWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+func requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := r.Header.Get(requestIDHeader)
+		if requestID == "" {
+			requestID = rand.Text()
+		}
+		w.Header().Set(requestIDHeader, requestID)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +94,7 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			attrs := []any{
 				"method", r.Method,
 				"path", r.URL.Path,
+				"request_id", responseWriter.Header().Get(requestIDHeader),
 				"client_ip", clientIP,
 				"duration", time.Since(start),
 				"request_body_bytes", requestBody.bytesRead,
@@ -119,7 +134,7 @@ func newServer(store *store.Store, port int, cancel context.CancelFunc, logger *
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: requestLogger(s.logger)(mux),
+		Handler: requestIDMiddleware(requestLogger(s.logger)(mux)),
 	}
 	s.httpServer = srv
 
