@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"boot.dev/linko/internal/linkoerr"
+	internallogging "boot.dev/linko/internal/logging"
 )
 
 type ShortURL struct {
@@ -39,8 +40,7 @@ func New(dir string, logger *slog.Logger) (*Store, error) {
 	}
 	if logger == nil {
 		// fallback to a simple logger to avoid nil checks elsewhere
-		// Use a text handler that writes to STDERR for compatibility.
-		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+		logger = slog.New(internallogging.NewStderrHandler(nil))
 	}
 	return &Store{
 		dir:    dir,

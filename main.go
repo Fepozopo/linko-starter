@@ -13,10 +13,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lmittmann/tint"
 	pkgerr "github.com/pkg/errors"
 
 	"boot.dev/linko/internal/build"
 	"boot.dev/linko/internal/linkoerr"
+	internallogging "boot.dev/linko/internal/logging"
 	"boot.dev/linko/internal/store"
 )
 
@@ -124,18 +126,14 @@ func initializeLogger() (*slog.Logger, io.Closer) {
 	// Otherwise, only write to STDERR.
 	path := os.Getenv("LINKO_LOG_FILE")
 	if path == "" {
-		// STDERR should include DEBUG and above.
-		stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})
-		return slog.New(stderrHandler), nil
+		return slog.New(internallogging.NewStderrHandler(&tint.Options{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})), nil
 	}
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		// If we can't open the file, fall back to STDERR and emit a message there.
 		fmt.Fprintf(os.Stderr, "failed to open log file %s, using STDERR: %v\n", path, err)
-		// Ensure STDERR includes DEBUG and above even when file logging fails.
-		stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})
-		return slog.New(stderrHandler), nil
+		return slog.New(internallogging.NewStderrHandler(&tint.Options{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})), nil
 	}
 
 	// Wrap file writer with an 8KB buffered writer.
@@ -144,7 +142,7 @@ func initializeLogger() (*slog.Logger, io.Closer) {
 	// File handler should include INFO and above. Use JSON for file logs.
 	fileHandler := slog.NewJSONHandler(bufWriter, &slog.HandlerOptions{Level: slog.LevelInfo, ReplaceAttr: replaceAttr})
 	// STDERR handler should include DEBUG and above.
-	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})
+	stderrHandler := internallogging.NewStderrHandler(&tint.Options{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})
 
 	// Combine handlers so records are directed to the appropriate outputs
 	// depending on their level.
