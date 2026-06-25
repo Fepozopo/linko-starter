@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/lmittmann/tint"
 	pkgerr "github.com/pkg/errors"
+	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 
 	"boot.dev/linko/internal/build"
 	"boot.dev/linko/internal/linkoerr"
@@ -36,27 +36,15 @@ func main() {
 	os.Exit(status)
 }
 
-// bufferedFile wraps an os.File and a bufio.Writer so we can flush on Close.
-type bufferedFile struct {
-	f *os.File
-	w *bufio.Writer
+type rotatingFile struct {
+	logger *lumberjack.Logger
 }
 
-func (bf *bufferedFile) Close() error {
-	var flushErr error
-	if bf.w != nil {
-		flushErr = bf.w.Flush()
+func (rf *rotatingFile) Close() error {
+	if rf.logger == nil {
+		return nil
 	}
-	closeErr := bf.f.Close()
-
-	// Prefer returning the flush error if present, but include both if both exist.
-	if flushErr != nil {
-		if closeErr != nil {
-			return fmt.Errorf("flush error: %v; close error: %v", flushErr, closeErr)
-		}
-		return flushErr
-	}
-	return closeErr
+	return rf.logger.Close()
 }
 
 // stackTracer extracts stack traces from errors wrapped with pkg/errors.
@@ -122,25 +110,24 @@ func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 }
 
 func initializeLogger() (*slog.Logger, io.Closer) {
-	// If LINKO_LOG_FILE is set, write to both the file and STDERR.
+	// If LINKO_LOG_FILE is set, write to both the rotating file and STDERR.
 	// Otherwise, only write to STDERR.
-	path := os.Getenv("LINKO_LOG_FILE")
-	if path == "" {
+	logFile := os.Getenv("LINKO_LOG_FILE")
+	if logFile == "" {
 		return slog.New(internallogging.NewStderrHandler(&tint.Options{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})), nil
 	}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		// If we can't open the file, fall back to STDERR and emit a message there.
-		fmt.Fprintf(os.Stderr, "failed to open log file %s, using STDERR: %v\n", path, err)
-		return slog.New(internallogging.NewStderrHandler(&tint.Options{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})), nil
+	rotatingLogger := &lumberjack.Logger{
+		Filename:   logFile,
+		MaxSize:    1,
+		MaxAge:     28,
+		MaxBackups: 10,
+		LocalTime:  false,
+		Compress:   true,
 	}
-
-	// Wrap file writer with an 8KB buffered writer.
-	bufWriter := bufio.NewWriterSize(f, 8192)
 
 	// File handler should include INFO and above. Use JSON for file logs.
-	fileHandler := slog.NewJSONHandler(bufWriter, &slog.HandlerOptions{Level: slog.LevelInfo, ReplaceAttr: replaceAttr})
+	fileHandler := slog.NewJSONHandler(rotatingLogger, &slog.HandlerOptions{ReplaceAttr: replaceAttr})
 	// STDERR handler should include DEBUG and above.
 	stderrHandler := internallogging.NewStderrHandler(&tint.Options{Level: slog.LevelDebug, ReplaceAttr: replaceAttr})
 
@@ -149,7 +136,7 @@ func initializeLogger() (*slog.Logger, io.Closer) {
 	multi := slog.NewMultiHandler(fileHandler, stderrHandler)
 	logger := slog.New(multi)
 
-	return logger, &bufferedFile{f: f, w: bufWriter}
+	return logger, &rotatingFile{logger: rotatingLogger}
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
@@ -160,7 +147,7 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 	// Initialize a single logger used throughout the app.
 	logger, lf := initializeLogger()
 	if lf != nil {
-		// only close if we successfully opened a real file
+		// Only close if file logging is enabled.
 		defer lf.Close()
 	}
 
