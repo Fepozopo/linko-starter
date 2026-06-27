@@ -29,7 +29,16 @@ func httpError(ctx context.Context, w http.ResponseWriter, status int, err error
 	if logCtx, ok := ctx.Value(LogContextKey).(*LogContext); ok && logCtx != nil {
 		logCtx.Error = logErr
 	}
-	http.Error(w, err.Error(), status)
+
+	responseText := err.Error()
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError:
+		if text := http.StatusText(status); text != "" {
+			responseText = text
+		}
+	}
+
+	http.Error(w, responseText, status)
 }
 
 var allowedUsers = map[string]string{

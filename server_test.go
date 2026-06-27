@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -187,7 +188,45 @@ func Test_requestLoggerLogsError(t *testing.T) {
 	if !ok || stackTrace == "" {
 		t.Fatalf("expected stack_trace for io.EOF: %#v", errorValue)
 	}
+	if got := rr.Body.String(); got != "Internal Server Error\n" {
+		t.Fatalf("unexpected response body: got %q, want %q", got, "Internal Server Error\n")
+	}
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("unexpected status code: got %d, want %d", rr.Code, http.StatusInternalServerError)
+	}
+}
+
+func Test_httpErrorResponseBody(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		err        error
+		wantBody   string
+		wantLogged string
+	}{
+		{name: "unauthorized", status: http.StatusUnauthorized, err: io.EOF, wantBody: http.StatusText(http.StatusUnauthorized), wantLogged: "EOF"},
+		{name: "forbidden", status: http.StatusForbidden, err: io.EOF, wantBody: http.StatusText(http.StatusForbidden), wantLogged: "EOF"},
+		{name: "internal server error", status: http.StatusInternalServerError, err: io.EOF, wantBody: http.StatusText(http.StatusInternalServerError), wantLogged: "EOF"},
+		{name: "bad request keeps text", status: http.StatusBadRequest, err: io.EOF, wantBody: io.EOF.Error(), wantLogged: "EOF"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			logCtx := &LogContext{}
+			ctx := context.WithValue(context.Background(), LogContextKey, logCtx)
+			rr := httptest.NewRecorder()
+
+			httpError(ctx, rr, tc.status, tc.err)
+
+			if got := rr.Body.String(); got != tc.wantBody+"\n" {
+				t.Fatalf("unexpected response body: got %q, want %q", got, tc.wantBody+"\n")
+			}
+			if logCtx.Error == nil {
+				t.Fatal("expected log context error to be set")
+			}
+			if got := logCtx.Error.Error(); got != tc.wantLogged {
+				t.Fatalf("unexpected logged error: got %q, want %q", got, tc.wantLogged)
+			}
+		})
 	}
 }
