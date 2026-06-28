@@ -55,6 +55,27 @@ func Test_requestIDMiddlewareGeneratesRequestID(t *testing.T) {
 	}
 }
 
+func Test_redactIP(t *testing.T) {
+	tests := []struct {
+		name    string
+		address string
+		want    string
+	}{
+		{name: "ipv4 with port", address: "192.168.1.42:12345", want: "192.168.1.x"},
+		{name: "bare ipv4", address: "192.168.1.42", want: "192.168.1.x"},
+		{name: "ipv6 with port", address: "[2001:db8::1]:12345", want: "[2001:db8::1]:12345"},
+		{name: "hostname with port", address: "example.com:12345", want: "example.com:12345"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := redactIP(tc.address); got != tc.want {
+				t.Fatalf("unexpected redacted address: got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func Test_requestLogger(t *testing.T) {
 	logBuffer := &bytes.Buffer{}
 
@@ -93,7 +114,7 @@ func Test_requestLogger(t *testing.T) {
 	rr := httptest.NewRecorder()
 	loggedHandler.ServeHTTP(rr, req)
 
-	const expectedLogString = `time=2023-10-01T12:34:57.000Z level=INFO msg="Served request" method=POST path=/api/stats request_id=request-123 client_ip=192.0.2.1:1234 duration=42ms request_body_bytes=7 response_status=201 response_body_bytes=2` + "\n"
+	const expectedLogString = `time=2023-10-01T12:34:57.000Z level=INFO msg="Served request" method=POST path=/api/stats request_id=request-123 client_ip=192.0.2.x duration=42ms request_body_bytes=7 response_status=201 response_body_bytes=2` + "\n"
 	const expectedStatusCode = http.StatusCreated
 
 	if got := logBuffer.String(); got != expectedLogString {
@@ -131,7 +152,7 @@ func Test_requestLoggerAddsUser(t *testing.T) {
 	rr := httptest.NewRecorder()
 	loggedHandler.ServeHTTP(rr, req)
 
-	const expectedLogString = `time=2023-10-01T12:34:57.000Z level=INFO msg="Served request" method=POST path=/api/login request_id=request-456 client_ip=192.0.2.1:1234 duration=42ms request_body_bytes=0 response_status=200 response_body_bytes=0 user=frodo` + "\n"
+	const expectedLogString = `time=2023-10-01T12:34:57.000Z level=INFO msg="Served request" method=POST path=/api/login request_id=request-456 client_ip=192.0.2.x duration=42ms request_body_bytes=0 response_status=200 response_body_bytes=0 user=frodo` + "\n"
 	const expectedStatusCode = http.StatusOK
 
 	if got := logBuffer.String(); got != expectedLogString {

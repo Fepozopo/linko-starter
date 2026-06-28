@@ -68,6 +68,25 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func redactIP(address string) string {
+	host := address
+	if parsedHost, _, err := net.SplitHostPort(address); err == nil {
+		host = parsedHost
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return address
+	}
+
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		return address
+	}
+
+	return fmt.Sprintf("%d.%d.%d.x", ipv4[0], ipv4[1], ipv4[2])
+}
+
 func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,10 +103,7 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(responseWriter, r)
 
 			// Log structured access information.
-			clientIP := r.RemoteAddr
-			if host, port, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-				clientIP = fmt.Sprintf("%s:%s", host, port)
-			}
+			clientIP := redactIP(r.RemoteAddr)
 			if responseWriter.statusCode == 0 {
 				responseWriter.statusCode = http.StatusOK
 			}
