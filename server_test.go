@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -214,6 +215,26 @@ func Test_requestLoggerLogsError(t *testing.T) {
 	}
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("unexpected status code: got %d, want %d", rr.Code, http.StatusInternalServerError)
+	}
+}
+
+// Test_newServerExposesMetricsRoute confirms the Prometheus metrics handler is mounted at /metrics.
+func Test_newServerExposesMetricsRoute(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s := newServer(nil, 0, func() {}, logger)
+
+	req := httptest.NewRequest("GET", "http://lin.ko/metrics", nil)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if got := rr.Header().Get("Content-Type"); !strings.Contains(got, "text/plain") {
+		t.Fatalf("unexpected content type: got %q", got)
+	}
+	if got := rr.Body.String(); !strings.Contains(got, "go_gc_duration_seconds") {
+		t.Fatalf("expected Prometheus metrics output, got %q", got)
 	}
 }
 

@@ -12,11 +12,14 @@ import (
 	"os"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"boot.dev/linko/internal/store"
 )
 
 const requestIDHeader = "X-Request-ID"
 
+// server owns the HTTP server, shared store, shutdown hook, and request logger.
 type server struct {
 	httpServer *http.Server
 	store      *store.Store
@@ -131,6 +134,7 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
+// newServer wires the Linko HTTP routes, including the Prometheus metrics endpoint.
 func newServer(store *store.Store, port int, cancel context.CancelFunc, logger *slog.Logger) *server {
 	mux := http.NewServeMux()
 
@@ -141,6 +145,7 @@ func newServer(store *store.Store, port int, cancel context.CancelFunc, logger *
 	}
 
 	mux.HandleFunc("GET /", s.handlerIndex)
+	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.Handle("POST /api/login", s.authMiddleware(http.HandlerFunc(s.handlerLogin)))
 	mux.Handle("POST /api/shorten", s.authMiddleware(http.HandlerFunc(s.handlerShortenLink)))
 	mux.Handle("GET /api/stats", s.authMiddleware(http.HandlerFunc(s.handlerStats)))
@@ -157,6 +162,7 @@ func newServer(store *store.Store, port int, cancel context.CancelFunc, logger *
 	return s
 }
 
+// start begins serving HTTP traffic on the configured listener.
 func (s *server) start() error {
 	ln, err := net.Listen("tcp", s.httpServer.Addr)
 	if err != nil {
@@ -169,6 +175,7 @@ func (s *server) start() error {
 	return nil
 }
 
+// shutdown gracefully stops the HTTP server within the provided context.
 func (s *server) shutdown(ctx context.Context) error {
 	s.logger.Debug("Linko is shutting down")
 	return s.httpServer.Shutdown(ctx)
