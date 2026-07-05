@@ -134,7 +134,7 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// newServer wires the Linko HTTP routes, including the Prometheus metrics endpoint.
+// newServer wires the Linko HTTP routes and request middleware, including the Prometheus metrics endpoint.
 func newServer(store *store.Store, port int, cancel context.CancelFunc, logger *slog.Logger) *server {
 	mux := http.NewServeMux()
 
@@ -155,7 +155,7 @@ func newServer(store *store.Store, port int, cancel context.CancelFunc, logger *
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: requestIDMiddleware(requestLogger(s.logger)(mux)),
+		Handler: requestIDMiddleware(metricsMiddleware(requestLogger(s.logger)(mux))),
 	}
 	s.httpServer = srv
 
